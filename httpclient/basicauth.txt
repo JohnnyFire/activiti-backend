@@ -1,0 +1,253 @@
+
+import com.google.gson.Gson;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.http.HttpHeaders;
+import org.apache.http.HttpResponse;
+import org.apache.http.client.HttpClient;
+import org.apache.http.client.config.RequestConfig;
+import org.apache.http.client.methods.RequestBuilder;
+import org.apache.http.entity.ContentType;
+import org.apache.http.entity.StringEntity;
+import org.apache.http.impl.client.HttpClientBuilder;
+import org.apache.http.util.EntityUtils;
+import org.springframework.http.HttpMethod;
+
+import java.io.IOException;
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
+import java.util.Map;
+
+/**
+ * @author wxweven
+ */
+@Slf4j
+public class HttpRequestClient {
+
+    // 默认 连接/读取数据 超时时间都是 10s
+    private static final int DEFAULT_CONNECT_TIMEOUT = 10_000;
+    private static final int DEFAULT_READ_TIMEOUT = 10_000;
+    private static final Gson GSON = new Gson();
+
+    private Auth auth;
+    private HttpClient httpClient;
+
+    // 用户名密码认证，默认的超时时间(10s)
+    public HttpRequestClient(String username, String password) {
+        this(username, password,
+                DEFAULT_CONNECT_TIMEOUT,
+                DEFAULT_READ_TIMEOUT
+        );
+    }
+
+    // 用户名密码认证，自定义超时时间
+    public HttpRequestClient(String username, String password,
+                               int connectTimeout, int readTimeout) {
+
+        this.auth = new BasicAuth(username, password);
+        this.httpClient = HttpClientBuilder.create()
+                .setDefaultRequestConfig(getRequestConfig(connectTimeout, readTimeout))
+                .build();
+    }
+
+    // BearerToken 认证，默认的超时时间(10s)
+    public HttpRequestClient(String bearerToken) {
+        this(bearerToken,
+                DEFAULT_CONNECT_TIMEOUT,
+                DEFAULT_READ_TIMEOUT
+        );
+    }
+
+    // BearerToken 认证，自定义超时时间
+    public HttpRequestClient(String bearerToken,
+                               int connectTimeout, int readTimeout) {
+
+        this.auth = new BearerAuth(bearerToken);
+        this.httpClient = HttpClientBuilder.create()
+                .setDefaultRequestConfig(getRequestConfig(connectTimeout, readTimeout))
+                .build();
+    }
+
+    /**
+     * 设置 HTTP 请求超时时间
+     *
+     * @param connectTimeout tcp 连接超时时间
+     * @param readTimeout    读取数据超时时间
+     * @return
+     */
+    private RequestConfig getRequestConfig(int connectTimeout, int readTimeout) {
+        return RequestConfig.custom()
+                .setConnectTimeout(connectTimeout)
+                .setConnectionRequestTimeout(connectTimeout)
+                .setSocketTimeout(readTimeout)
+                .build();
+    }
+
+    /**
+     * 发送 GET 请求，不带参数
+     *
+     * @param url
+     * @return
+     */
+    public String doGet(String url) {
+        return doGet(url, new HashMap<>());
+    }
+
+    /**
+     * 发送 GET 请求，不带参数
+     *
+     * @param uri
+     * @return
+     */
+    public String doGet(URI uri) {
+        return doGet(uri, new HashMap<>());
+    }
+
+    /**
+     * 发送 GET 请求，K-V 形式参数
+     *
+     * @param url
+     * @param params
+     * @return
+     */
+    public String doGet(String url, Map<String, String> params) {
+        RequestBuilder reqBuilder = RequestBuilder.get(url);
+        return doGet(reqBuilder, params);
+    }
+
+    /**
+     * 发送 GET 请求，K-V 形式参数
+     *
+     * @param uri
+     * @param params
+     * @return
+     */
+    public String doGet(URI uri, Map<String, String> params) {
+        RequestBuilder reqBuilder = RequestBuilder.get(uri);
+        return doGet(reqBuilder, params);
+    }
+
+    public String doGet(RequestBuilder reqBuilder, Map<String, String> params) {
+        reqBuilder.addHeader(HttpHeaders.AUTHORIZATION, auth.getAuth());
+
+        for (Map.Entry<String, String> entry : params.entrySet()) {
+            reqBuilder.addParameter(entry.getKey(), entry.getValue());
+        }
+
+        try {
+            HttpResponse resp = httpClient.execute(reqBuilder.build());
+            return EntityUtils.toString(resp.getEntity(), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            log.error("doGet 异常: reqBuilder={}, params={}", reqBuilder, params, e);
+            return null;
+        }
+    }
+
+    /***
+     * 发送 GET 请求，不带参数，返回指定类型的 class
+     * @param url 请求的 url
+     * @param responseType 返回类型
+     * @param <T>
+     * @return
+     */
+    public <T> T getForObject(String url, Class<T> responseType) {
+        RequestBuilder reqBuilder = RequestBuilder.get(url);
+        return getForObject(reqBuilder, responseType);
+    }
+
+    /***
+     * 发送 GET 请求，不带参数，返回指定类型的 class
+     * @param uri 请求的 uri
+     * @param responseType 返回类型
+     * @param <T>
+     * @return
+     */
+    public <T> T getForObject(URI uri, Class<T> responseType) {
+        RequestBuilder reqBuilder = RequestBuilder.get(uri);
+        return getForObject(reqBuilder, responseType);
+    }
+
+    public <T> T getForObject(RequestBuilder reqBuilder, Class<T> responseType) {
+        reqBuilder.addHeader(HttpHeaders.AUTHORIZATION, auth.getAuth());
+
+        try {
+            HttpResponse resp = httpClient.execute(reqBuilder.build());
+            String result = EntityUtils.toString(resp.getEntity(), StandardCharsets.UTF_8);
+
+            return GSON.fromJson(result, responseType);
+        } catch (IOException e) {
+            log.error("getForObject 异常: reqBuilder={}, responseType={}", reqBuilder, responseType, e);
+            return null;
+        }
+    }
+
+    /**
+     * 发送 POST 请求，JSON 形式
+     *
+     * @param url
+     * @param json json字符串
+     * @return
+     */
+    public String doPost(String url, String json) {
+        try {
+            HttpResponse resp = this.exchange(HttpMethod.POST, url, json);
+            return EntityUtils.toString(resp.getEntity(), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            log.error("doPost 异常: url={}, json={}", url, json, e);
+            return null;
+        }
+    }
+
+    /**
+     * 发送 POST 请求，JSON 形式，返回 HttpResponse
+     *
+     * @param url
+     * @param json json字符串
+     * @return
+     */
+    public HttpResponse doPostResp(String url, String json) {
+        return this.exchange(HttpMethod.POST, url, json);
+    }
+
+    /**
+     * 发送 PUT 请求，JSON 形式
+     *
+     * @param url
+     * @param json json字符串
+     * @return
+     */
+    public HttpResponse doPut(String url, String json) {
+        return this.exchange(HttpMethod.PUT, url, json);
+    }
+
+    /**
+     * 发送 PUT 请求，JSON 形式
+     *
+     * @param url
+     * @param json json字符串
+     * @return
+     */
+    public HttpResponse doDelete(String url, String json) {
+        return this.exchange(HttpMethod.DELETE, url, json);
+    }
+
+    public HttpResponse exchange(HttpMethod method, String url, String json) {
+        RequestBuilder reqBuilder = RequestBuilder.create(method.toString())
+                .setUri(url)
+                .addHeader(HttpHeaders.AUTHORIZATION, auth.getAuth())
+                .addHeader("Accept", ContentType.APPLICATION_JSON.toString())
+                .addHeader("Content-type", ContentType.APPLICATION_JSON.toString());
+
+        if (StringUtils.isNotBlank(json)) {
+            reqBuilder.setEntity(new StringEntity(json, ContentType.APPLICATION_JSON));
+        }
+
+        try {
+            return httpClient.execute(reqBuilder.build());
+        } catch (IOException e) {
+            log.error("doPost 异常: url={}, json={}", url, json, e);
+            return null;
+        }
+    }
+}
